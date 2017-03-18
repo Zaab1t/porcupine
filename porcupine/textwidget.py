@@ -1,6 +1,6 @@
 """The big text widget in the middle of the editor."""
 
-from functools import partial   # not "import functools" to avoid long lines
+import functools
 import tkinter as tk
 
 from porcupine.settings import config, color_themes
@@ -22,6 +22,16 @@ def spacecount(string):
     return result
 
 
+def _cursor_move_callback(method):
+    """A decorator for callbacks that run when the cursor moves."""
+    @functools.wraps(method)
+    def result(self, *args, **kwargs):
+        response = method(self, *args, **kwargs)
+        self.after_idle(self._do_cursor_move)
+        return response
+    return result
+
+
 class EditorText(tk.Text):
 
     def __init__(self, *args, **kwargs):
@@ -38,6 +48,7 @@ class EditorText(tk.Text):
         def cursor_move(event):
             self.after_idle(self._do_cursor_move)
 
+        partial = functools.partial  # pep8 line length
         self.bind('<<Modified>>', self._do_modified)
         self.bind('<Button-1>', cursor_move)
         self.bind('<Key>', cursor_move)
@@ -74,6 +85,10 @@ class EditorText(tk.Text):
         self['selectforeground'] = theme['selectforeground']
         self['selectbackground'] = theme['selectbackground']
 
+    @_cursor_move_callback
+    def _on_other_key(self, event):
+        pass
+
     def _do_modified(self, event):
         # this runs recursively if we don't unbind
         self.unbind('<<Modified>>')
@@ -89,6 +104,7 @@ class EditorText(tk.Text):
             for callback in self.on_cursor_move:
                 callback()
 
+    @_cursor_move_callback
     def _on_delete(self, control_down, event):
         """This runs when the user presses backspace or delete."""
         if not self.tag_ranges('sel'):
@@ -113,7 +129,6 @@ class EditorText(tk.Text):
                 self.event_generate('<<NextWord>>')
                 self.delete(old_cursor_pos, 'insert')
 
-        self.after_idle(self._do_cursor_move)
         return None
 
     def _on_ctrl_a(self, event):
@@ -121,22 +136,23 @@ class EditorText(tk.Text):
         self.tag_add('sel', '1.0', 'end-1c')
         return 'break'     # don't run _on_key or move cursor
 
+    @_cursor_move_callback
     def _on_return(self, event):
         """Schedule automatic indent and whitespace stripping."""
         # the whitespace must be stripped after autoindenting,
         # see _autoindent()
         self.after_idle(self._autoindent)
         self.after_idle(self._strip_whitespace)
-        self.after_idle(self._do_cursor_move)
 
+    @_cursor_move_callback
     def _on_closing_brace(self, event):
         """Dedent automatically."""
         lineno = int(self.index('insert').split('.')[0])
         beforethis = self.get('%d.0' % lineno, 'insert')
         if beforethis.isspace():
             self.dedent(lineno)
-        self.after_idle(self._do_cursor_move)
 
+    @_cursor_move_callback
     def _on_tab(self, shifted):
         """Indent, dedent or autocomplete."""
         if shifted:

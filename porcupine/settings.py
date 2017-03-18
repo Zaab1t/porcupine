@@ -70,7 +70,11 @@ def load():
 
 
 def reset_config():
+    # theelous3 wanted me not to change the theme, so we'll avoid
+    # changing that here
+    theme = config['editing:color_theme'].get()
     _load_config(user_settings=False)
+    config['editing:color_theme'].set(theme)
 
 
 _COMMENTS = """\
