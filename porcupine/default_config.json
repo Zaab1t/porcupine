@@ -1,20 +1,12 @@
 {
+    "general": {
+        "encoding": "UTF-8",
+        "color_theme": "Default",
+        "window_size": [650, 500],
+    },
     "editing": {
-        "font": "TkFixedFont",
+        "font": ["TkFixedFont", 10],
         "undo": true,
         "indent": 4,
-        "maxlinelen": 79,
-        "longlinemarker": true,
-        "autocomplete": true,
-        "color_theme": "Default"
     },
-    "files": {
-        "add_trailing_newline": true,
-        "encoding": "UTF-8"
-    },
-    "gui": {
-        "statusbar": true,
-        "default_geometry": "650x500",
-        "linenumbers": true
-    }
 }

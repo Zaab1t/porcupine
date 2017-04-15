@@ -1,19 +1,49 @@
 """The big text widget in the middle of the editor."""
 
-from functools import partial   # not "import functools" to avoid long lines
+import functools
 import re
 import tkinter as tk
+import tkinter.font as tkfont
 
-from porcupine import utils
-from porcupine.settings import config, color_themes
+from porcupine import config, utils
+
+# the editing section is all about the big text widget
+config.add_key('editing', 'font', [None, 10])
+config.add_key('editing', 'undo', True)
+config.add_key('editing', 'indent', 4)    # TODO: tabs? (whyyy :( lol)
 
 
-def spacecount(string):
+@config.validator('editing', 'font')
+def _check_font(font):
+    print(font)
+    family, size = font
+    if family is None:
+        # this recurses a bit, but it's not too bad
+        init_font()
+        return True
+    if not 0 < size < 1000:
+        return False
+    return family in tkfont.families()
+
+
+def init_font():
+    """Make sure that the font family is set.
+
+    This should be called after the root window is created.
+    """
+    print(config.get('editing', 'font'))
+    family, size = config.get('editing', 'font')
+    if family is None:
+        default_font = tkfont.Font(font='TkFixedFont')
+        config.set('editing', 'font', [default_font['family'], size])
+
+
+def _spacecount(string):
     """Count how many spaces the string starts with.
 
-    >>> spacecount('  123')
+    >>> _spacecount('  123')
     2
-    >>> spacecount('  \n')
+    >>> _spacecount('  \n')
     2
     """
     result = 0
@@ -28,22 +58,28 @@ def spacecount(string):
 # line number plugin
 class ThemedText(tk.Text):
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, use_current_theme=True, **kwargs):
         super().__init__(*args, **kwargs)
-        config.connect('editing:font', self._set_font)
-        config.connect('editing:color_theme', self._set_theme)
+        init_font()
+        config.connect('editing', 'font', self._on_font_changed)
+
+        self._use_current_theme = use_current_theme
+        if use_current_theme:
+            config.connect('general', 'color_theme', self.set_theme_name)
 
     # tkinter seems to call this automatically
     def destroy(self):
-        config.disconnect('editing:font', self._set_font)
-        config.disconnect('editing:color_theme', self._set_theme)
+        config.disconnect('editing', 'font', self._on_font_changed)
+        if self._use_current_theme:
+            config.disconnect('general', 'color_theme', self.set_theme_name)
         super().destroy()
 
-    def _set_font(self, font):
-        self['font'] = font
+    def _on_font_changed(self, font):
+        family, size = font
+        self['font'] = (family, size, '')
 
-    def _set_theme(self, name):
-        theme = color_themes[name]
+    def set_theme_name(self, name):
+        theme = config.color_themes[name]
         self['fg'] = theme['foreground']
         self['bg'] = theme['background']
         self['insertbackground'] = theme['foreground']  # cursor color
@@ -68,6 +104,7 @@ class MainText(ThemedText):
         def cursor_move(event):
             self.after_idle(self._do_cursor_move)
 
+        partial = functools.partial     # avoid long lines
         self.bind('<<Modified>>', self._do_modified)
         self.bind('<Button-1>', cursor_move)
         self.bind('<Key>', cursor_move)
@@ -94,30 +131,46 @@ class MainText(ThemedText):
             self.bind('<Shift-Tab>', lambda event: self._on_tab(True))
 
         utils.bind_mouse_wheel(self, self._on_wheel, prefixes='Control-')
-        config.connect('editing:undo', self._set_undo)
+        self.bind('<Control-plus>', self._zoom_in)
+        self.bind('<Control-minus>', self._zoom_out)
+        self.bind('<Control-Key-0>', self._zoom_reset)
+
+        config.connect('editing', 'undo', self._set_undo)
 
     def destroy(self):
-        config.disconnect('editing:undo', self._set_undo)
+        config.disconnect('editing', 'undo', self._set_undo)
         super().destroy()
 
     def _set_undo(self, undo):
         self['undo'] = undo
 
-    def _on_wheel(self, direction):
-        old_font = config['editing:font']
-        if old_font == 'TkFixedFont':
-            # can't do anything
-            return
+    # ThemedText.__init__ ran init_font() so we're sure that the family
+    # has been set
+    def _zoom_in(self, event=None):
+        # can't mutate the config value :(
+        family, size = config.get('editing', 'font')
 
-        family, size = re.search(r'^\{(.+)\} (\d+)$', old_font).groups()
-        size = int(size)
+        # 1.2 is a good multiplier here because round(3 * 1.2) is 4 and
+        # round(4 / 1.2) is 3
+        size = round(size * 1.2)
+        if size < 1000:
+            config.set('editing', 'font', [family, size])
+
+    def _zoom_out(self, event=None):
+        family, size = config.get('editing', 'font')
+        size = round(size / 1.2)
+        if size >= 3:
+            config.set('editing', 'font', [family, size])
+
+    def _zoom_reset(self, event):
+        family, size = config.get('editing', 'font')
+        config.set('editing', 'font', [family, 10])
+
+    def _on_wheel(self, direction):
         if direction == 'up':
-            size += 1
+            self._zoom_in()
         else:
-            size -= 1
-        new_font = '{%s} %d' % (family, size)
-        if config.validate('editing:font', new_font):
-            config['editing:font'] = new_font
+            self._zoom_out()
 
     def _do_modified(self, event):
         # this runs recursively if we don't unbind
@@ -220,8 +273,8 @@ class MainText(ThemedText):
         the line.
         """
         line = self.get('%d.0' % lineno, '%d.0+1l' % lineno)
-        spaces = spacecount(line)
-        indent = config['editing:indent']
+        spaces = _spacecount(line)
+        indent = config.get('editing', 'indent')
 
         # make the indent consistent, for example, add 1 space if indent
         # is 4 and there are 7 spaces
@@ -237,11 +290,11 @@ class MainText(ThemedText):
         the line.
         """
         line = self.get('%d.0' % lineno, '%d.0+1l' % lineno)
-        spaces = spacecount(line)
+        spaces = _spacecount(line)
         if spaces == 0:
             return 0
 
-        indent = config['editing:indent']
+        indent = config.get('editing', 'indent')
         howmany2del = spaces % indent
         if howmany2del == 0:
             howmany2del = indent
@@ -253,7 +306,7 @@ class MainText(ThemedText):
         """Indent or dedent the current line automatically if needed."""
         lineno = int(self.index('insert').split('.')[0])
         prevline = self.get('%d.0-1l' % lineno, '%d.0' % lineno)
-        self.insert('insert', spacecount(prevline) * ' ')
+        self.insert('insert', _spacecount(prevline) * ' ')
 
         # we can't strip trailing whitespace before this because then
         # pressing enter twice would get rid of all indentation
@@ -261,7 +314,7 @@ class MainText(ThemedText):
         if prevline.endswith((':', '(', '[', '{')):
             # start of a new block
             self.indent(lineno)
-        elif (prevline in {'return', 'break', 'pass'}
+        elif (prevline in {'return', 'break', 'pass', 'continue'}
               or prevline.startswith('return ')):
             # must be end of a block
             self.dedent(lineno)
@@ -270,7 +323,7 @@ class MainText(ThemedText):
         """Strip trailing whitespace at the end of a line."""
         line_end = '%d.0+1l-1c' % lineno
         line = self.get('%d.0' % lineno, line_end)
-        spaces = spacecount(line[::-1])
+        spaces = _spacecount(line[::-1])
         if spaces == 0:
             return
 

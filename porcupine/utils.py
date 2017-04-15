@@ -47,6 +47,18 @@ def get_window(widget):
     return widget
 
 
+def make_font_string(family_and_size):
+    """Create a '{family} size' font string.
+
+    If family is 'TkFixedFont', return it as is and let tkinter use
+    whatever default size it wants to use.
+    """
+    family, size = family_and_size
+    if family == 'TkFixedFont':
+        return 'TkFixedFont'
+    return '{%s} %d' % (family, size)
+
+
 def errordialog(title, message, plaintext=None):
     """Like messagebox.showinfo, but supports plain text messages.
 

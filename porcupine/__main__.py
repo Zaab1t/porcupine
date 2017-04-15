@@ -8,7 +8,7 @@ import sys
 import tkinter as tk
 
 import porcupine.editor
-from porcupine import dirs, logs, plugins, settings
+from porcupine import config, dirs, logs, plugins
 
 log = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         'file', metavar='FILES', nargs=argparse.ZERO_OR_MORE,
-        help="open these files when the editor starts, - means stdin")
+        help="open these files when Porcupine starts, - means stdin")
     parser.add_argument(
         '--verbose', '-v', action='store_true',
         help="print same debugging messages to stderr as to log file")
@@ -40,14 +40,13 @@ def main():
              *(list(sys.version_info[:3]) + [sys.executable]))
 
     root = tk.Tk()
-    settings.load()     # root must exist first
-
+    config.load()
     editor = porcupine.editor.Editor(root)
-    plugins.load(editor)
     editor.pack(fill='both', expand=True)
+    plugins.load(editor)
 
     root['menu'] = editor.menubar
-    root.geometry(settings.config['gui:default_geometry'])
+    root.geometry('%dx%d' % tuple(config.get('general', 'window_size')))
     root.title("Porcupine")
     root.protocol('WM_DELETE_WINDOW', editor.do_quit)
 
@@ -70,15 +69,16 @@ def main():
             else:
                 editor.open_file(file, content='')
 
-        # the user can change the settings only if we get here, so
+        # the user can change the config only if we get here, so
         # there's no need to try/finally the whole thing
         try:
             root.mainloop()
         finally:
-            settings.save()
+            config.save()
 
     log.info("exiting Porcupine successfully")
 
 
 if __name__ == '__main__':
     main()
+

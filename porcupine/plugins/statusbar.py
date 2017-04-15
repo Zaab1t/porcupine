@@ -1,7 +1,8 @@
 import tkinter as tk
 
-from porcupine import plugins
-from porcupine.settings import config
+from porcupine import config, plugins
+
+config.add_key('statusbar', 'enabled', True)
 
 
 class StatusBar(tk.Label):
@@ -35,7 +36,6 @@ def session_hook(editor):
     # starts? or maybe some messages about failing to load plugins?
     statusbar.update()
 
-    @config.connect('gui:statusbar')
     def set_enabled(enabled):
         # TODO: convert the find/replace area into a plugin that goes
         # into the editor, but to make sure that it's always above the
@@ -45,7 +45,7 @@ def session_hook(editor):
         else:
             statusbar.pack_forget()
 
-    with set_enabled:    # config.connect() returned a context manager
+    with config.connect('statusbar', 'enabled', set_enabled):
         yield
 
 

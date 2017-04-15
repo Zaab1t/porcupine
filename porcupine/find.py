@@ -142,9 +142,10 @@ class Finder(tk.Frame):
 
 
 if __name__ == '__main__':
-    import porcupine.settings
+    from porcupine import config
+    config.load()
+
     root = tk.Tk()
-    porcupine.settings.load()
     text = tk.Text(root)
     text.insert('1.0', 'asdf ' * 10)
     text.pack(fill='both', expand=True)

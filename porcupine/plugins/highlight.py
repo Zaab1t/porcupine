@@ -33,8 +33,7 @@ import sys
 import tkinter as tk
 import tokenize
 
-from porcupine import plugins
-from porcupine.settings import config, color_themes
+from porcupine import config, plugins
 
 log = logging.getLogger(__name__)
 
@@ -65,13 +64,8 @@ class Highlighter:
         # dir(builtins), so we'll treat them as builtins
         self._keywords -= self._builtins
 
-        config.connect('editing:color_theme', self._set_theme_name)
-
-    def destroy(self):
-        config.disconnect('editing:color_theme', self._set_theme_name)
-
-    def _set_theme_name(self, name):
-        theme = color_themes[name]
+    def set_theme(self, name):
+        theme = config.color_themes[name]
         for tag in ['decorator', 'builtin', 'keyword', 'string',
                     'comment', 'exception']:
             self.textwidget.tag_config(tag, foreground=theme[tag])
@@ -213,9 +207,11 @@ class Highlighter:
 def filetab_hook(filetab):
     highlighter = Highlighter(filetab.textwidget)
     filetab.textwidget.on_modified.append(highlighter.highlight)
-    yield
-    highlighter.destroy()
-    filetab.textwidget.on_modified.remove(highlighter.highlight)
+    with config.connect('general', 'color_theme', highlighter.set_theme):
+        try:
+            yield
+        finally:
+            filetab.textwidget.on_modified.remove(highlighter.highlight)
 
 
 plugins.add_plugin("Highlight", filetab_hook=filetab_hook)
@@ -234,8 +230,9 @@ if __name__ == '__main__':
         text.bind('<<Modified>>', on_modified)
         highlighter.highlight()
 
+    load_settings()
+
     root = tk.Tk()
-    load_settings()     # must be after creating root window
     text = tk.Text(root, fg='white', bg='black', insertbackground='white')
     text.pack(fill='both', expand=True)
     text.bind('<<Modified>>', on_modified)
@@ -243,6 +240,7 @@ if __name__ == '__main__':
     # The theme doesn't display perfectly here because the highlighter
     # only does tags, not foreground, background etc. See textwidget.py.
     highlighter = Highlighter(text)
+    highlighter.set_theme(config.get('general', 'color_theme'))
 
     if len(sys.argv) == 2:
         with open(sys.argv[1], 'r') as f:

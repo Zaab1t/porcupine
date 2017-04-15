@@ -7,8 +7,8 @@ import tkinter as tk
 from tkinter import messagebox
 import traceback
 
-from porcupine import dialogs, find, plugins, tabs, textwidget, utils
-from porcupine.settings import config
+from porcupine import (
+    config, dialogs, find, plugins, tabs, textwidget, utils)
 
 log = logging.getLogger(__name__)
 
@@ -108,11 +108,14 @@ class FileTab(tabs.Tab):
         self._plugin_state = plugins.init_filetab(self)
 
     def _get_hash(self):
+        # superstitious optimizations ftw
+        encoding = config.get('general', 'encoding')
+
         result = hashlib.md5()
-        encoding = config['files:encoding']  # superstitious speed-up
         for chunk in self.textwidget.iter_chunks():
-            chunk = chunk.encode(encoding, errors='replace')
-            result.update(chunk)
+            # errors='replace' is good enough for this, no need to
+            # actually care about every possible character
+            result.update(chunk.encode(encoding, errors='replace'))
         return result.hexdigest()
 
     def mark_saved(self):
@@ -184,17 +187,8 @@ class FileTab(tabs.Tab):
             self.save_as()
             return
 
-        if self.textwidget.get('end-2c', 'end-1c') != '\n':
-            # doesn't end with a \n yet
-            if config['files:add_trailing_newline']:
-                # make sure we don't move the cursor, IDLE does it and
-                # it's annoying
-                here = self.textwidget.index('insert')
-                self.textwidget.insert('end-1c', '\n')
-                self.textwidget.mark_set('insert', here)
-
         try:
-            encoding = config['files:encoding']
+            encoding = config.get('general', 'encoding')
             with _backup_open(self.path, 'w', encoding=encoding) as f:
                 for chunk in self.textwidget.iter_chunks():
                     f.write(chunk)

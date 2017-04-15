@@ -9,8 +9,8 @@ import traceback
 import webbrowser
 
 from porcupine import __doc__ as init_docstring
-from porcupine import dialogs, filetabs, settingeditor, tabs, terminal
-from porcupine.settings import config, color_themes
+from porcupine import (config, dialogs, filetabs, #settingeditor,
+    tabs, terminal)
 
 
 log = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ def _get_description():
     return '\n\n'.join(parts)
 
 
-def create_welcome_msg(frame):
+def _create_welcome_msg(frame):
     # the texts will be packed closed to each other into this
     innerframe = tk.Frame(frame)
     innerframe.place(relx=0.5, rely=0.5, anchor='center')  # float in center
@@ -42,7 +42,7 @@ def create_welcome_msg(frame):
     frame.bind('<Configure>', resize)
 
 
-class HandyMenu(tk.Menu):
+class _HandyMenu(tk.Menu):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, tearoff=False, **kwargs)
@@ -78,7 +78,7 @@ class Editor(tk.Frame):
 
         tabmgr = self.tabmanager = tabs.TabManager(self)
         tabmgr.pack(fill='both', expand=True)
-        create_welcome_msg(tabmgr.no_tabs_frame)
+        _create_welcome_msg(tabmgr.no_tabs_frame)
 
         def tabmethod(attribute):
             """Make a function that calls the current tab's method."""
@@ -99,7 +99,7 @@ class Editor(tk.Frame):
 
         self.menubar = tk.Menu()
 
-        self.filemenu = HandyMenu()
+        self.filemenu = _HandyMenu()
         self.menubar.add_cascade(label="File", menu=self.filemenu)
         add = self.filemenu.add_handy_command
         add("New file", "Ctrl+N", self.new_file)
@@ -112,7 +112,7 @@ class Editor(tk.Frame):
         add("Quit Porcupine", "Ctrl+Q", self.do_quit)
         self._disablelist.extend(self.filemenu.disablelist)
 
-        self.editmenu = self.editmenu = HandyMenu()
+        self.editmenu = self.editmenu = _HandyMenu()
         self.menubar.add_cascade(label="Edit", menu=self.editmenu)
         add = self.editmenu.add_handy_command
         add("Undo", "Ctrl+Z", textmethod('undo'), disably=True)
@@ -126,14 +126,14 @@ class Editor(tk.Frame):
         add("Settings", None, self._show_settings)
         self._disablelist.extend(self.editmenu.disablelist)
 
-        self.thememenu = HandyMenu()
+        self.thememenu = _HandyMenu()
         self.menubar.add_cascade(label="Color themes", menu=self.thememenu)
         themevar = tk.StringVar()
-        themevar.set(config['editing:color_theme'])
+        themevar.set(config.get('general', 'color_theme'))
         themevar.trace('w', self._theme_changed_callback)
 
         # the Default theme goes first
-        theme_names = sorted(color_themes.sections(), key=str.casefold)
+        theme_names = sorted(config.color_themes.sections(), key=str.casefold)
         for name in ['Default'] + theme_names:
             # the variable option doesn't seem to work on windows 0_o
             # name=name prevents scope issues
@@ -141,7 +141,7 @@ class Editor(tk.Frame):
                 label=name, value=name, variable=themevar,
                 command=(lambda name=name: themevar.set(name)))
 
-        self.helpmenu = HandyMenu()
+        self.helpmenu = _HandyMenu()
         self.menubar.add_cascade(label="Help", menu=self.helpmenu)
         add = self.helpmenu.add_linky_command
         add("Free help chat",
@@ -196,7 +196,7 @@ class Editor(tk.Frame):
                       lambda event: self.after(100, self.editmenu.unpost))
 
     def _theme_changed_callback(self, varname, *junk):
-        config['editing:color_theme'] = self.getvar(varname)
+        config.set('general', 'color_theme', self.getvar(varname))
 
     # this is in a separate function because of scopes and loops
     # TODO: add link to python FAQ here
@@ -258,8 +258,9 @@ class Editor(tk.Frame):
         tab.path = path
 
         if content is None:
+            encoding = config.get('general', 'encoding')
             try:
-                with open(path, 'r', encoding=config['files:encoding']) as f:
+                with open(path, 'r', encoding=encoding) as f:
                     for line in f:
                         tab.textwidget.insert('end-1c', line)
             except (OSError, UnicodeError):

@@ -1,10 +1,14 @@
 """Maximum line length marker for Tkinter's text widget."""
 
+import functools
 import tkinter as tk
 import tkinter.font as tkfont
 
-from porcupine import plugins
-from porcupine.settings import config, color_themes
+from porcupine import config, plugins, textwidget, utils
+
+config.add_key('long_line_marker', 'enabled', True)
+config.add_key('long_line_marker', 'color', '#ff0000')
+config.add_key('long_line_marker', 'column', 79)
 
 
 class LongLineMarker:
@@ -12,17 +16,18 @@ class LongLineMarker:
     def __init__(self, textwidget):
         self._frame = tk.Frame(textwidget, width=1)
         self._height = 0   # set_height() will be called
+        self._textwidget = textwidget
 
-    def set_theme_name(self, name):
-        self._frame['bg'] = color_themes[name]['longlinemarker']
+    def set_color(self, color):
+        self._frame['bg'] = color
 
     def update(self, junk=None):
-        if not config['editing:longlinemarker']:
+        if not config.get('long_line_marker', 'enabled'):
             self._frame.place_forget()
             return
 
-        font = tkfont.Font(font=config['editing:font'])
-        where = font.measure(' ' * config['editing:maxlinelen'])
+        font = tkfont.Font(font=self._textwidget['font'])
+        where = font.measure(' ' * config.get('long_line_marker', 'column'))
         self._frame.place(x=where, height=self._height)
 
     def set_height(self, height):
@@ -36,10 +41,11 @@ def filetab_hook(filetab):
     def configure_callback(event):
         marker.set_height(event.height)
 
-    with config.connect('editing:color_theme', marker.set_theme_name):
-        with config.connect('editing:longlinemarker', marker.update):
-            with config.connect('editing:maxlinelen', marker.update):
-                with config.connect('editing:font', marker.update):
+    connect = functools.partial(config.connect, 'long_line_marker')
+    with connect('color', marker.set_color):
+        with connect('enabled', marker.update):
+            with connect('column', marker.update):
+                with config.connect('editing', 'font', marker.update):
                     filetab.textwidget.bind(
                         '<Configure>', configure_callback, add=True)
                     yield

@@ -2,8 +2,10 @@ import collections
 import re
 import tkinter as tk
 
-from porcupine import plugins
-from porcupine.settings import config
+from porcupine import config, plugins
+
+# TODO: more config options
+config.add_key('autocomplete', 'enabled', True)
 
 
 class AutoCompleter:
@@ -97,11 +99,11 @@ def filetab_hook(filetab):
             text.on_complete_next.remove(completer.do_next)
             text.on_cursor_move.remove(completer.reset)
 
-    if config['editing:autocomplete']:
+    if config.get('autocomplete', 'enabled'):
         set_enabled(True)
-    with config.connect('editing:autocomplete', set_enabled, run_now=False):
+    with config.connect('autocomplete', 'enabled', set_enabled, run_now=False):
         yield
-    if config['editing:autocomplete']:
+    if config.get('autocomplete', 'enabled'):
         set_enabled(False)
 
 
