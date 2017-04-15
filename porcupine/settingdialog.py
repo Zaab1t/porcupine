@@ -3,6 +3,7 @@
 # This uses ttk widgets instead of tk widgets because it needs
 # ttk.Combobox anyway and mixing the widgets looks inconsistent.
 
+import abc
 import re
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -19,27 +20,50 @@ except AttributeError:
     # At least not yet, but implementing this is easy to do by reading
     # the code of ttk.Combobox.
     class _TtkSpinbox(ttk.Entry):
+
         def __init__(self, master=None, *, from_=None, **kwargs):
             if from_ is not None:
-                kwargs['from'] = from_  # this actually works
+                kwargs['from'] = from_
             super().__init__(master, 'ttk::spinbox', **kwargs)
 
+        def config(self, *args, from_=None, **kwargs):
+            if from_ is not None:
+                kwargs['from'] = from_
+            super().config(*args, **kwargs)
 
-class _ConfigMixin:
 
-    def __init__(self, parent, section, key, **kwargs):
-        super().__init__(parent, **kwargs)
+class _ConfigMixin(abc.ABCMeta):
+
+    def __init__(self, parentwidget, section, key, *,
+                 validator=None, **kwargs):
+        super().__init__(parentwidget, **kwargs)
         self._section = section
         self._key = key
-        self._triangle = ttk.Label(parent)
+        self._validator = validator
+        self._triangle = ttk.Label(parentwidget)
         config.connect(self._section, self._key, self.from_config)
+
+    def validate(self, value):
+        """Call the validator set in initialization.
+
+        Override this in a subclass to implement other validations.
+        """
+        return self._validator is None or self._validator(value)
 
     # i didn't feel like using an abc
     def from_config(self, value):
-        raise NotImplementedError("from_config() must be overrided")
+        """This will be called when the config changes."""
+        raise NotImplementedError("from_config must be overrided")
 
-    def to_config(self, value):
-        config.set(self._section, self._key, value)
+    def set(self, value):
+        """Set a value to the config if self.validate(value) returns True.
+
+        Show the triangle instead if self.validate(value) returns False.
+        """
+        if self.validate(value):
+            config.set(self._section, self._key, value)
+        else:
+            self.show_triangle()
 
     def show_triangle(self):
         self._triangle['image'] = utils.get_image('triangle.gif')
@@ -60,7 +84,7 @@ class Checkbutton(_ConfigMixin, ttk.Checkbutton):
         self._var.trace('w', self.to_config)
 
     def to_config(self, *junk):
-        super().to_config(self._var.get())
+        self.set(self._var.get())
 
     def from_config(self, value):
         self._var.set(value)
@@ -75,7 +99,7 @@ class Entry(_ConfigMixin, ttk.Entry):
 
     def to_config(self, *junk):
         try:
-            super().to_config(self._var.get())
+            self.set(self._var.get())
             self.hide_triangle()
         except config.InvalidValue:
             self.show_triangle()
@@ -93,7 +117,7 @@ class Spinbox(_ConfigMixin, _TtkSpinbox):
 
     def to_config(self, *junk):
         try:
-            super().to_config(int(self._var.get()))
+            self.set(int(self._var.get()))
             self.hide_triangle()
         except ValueError:
             self.show_triangle()
@@ -123,7 +147,7 @@ class FontSelector(_ConfigMixin, ttk.Frame):
         family = self._familyvar.get()
         try:
             size = int(self._sizevar.get())
-            super().to_config([family, size])
+            self.set([family, size])
             self.hide_triangle()
         except ValueError:
             self.show_triangle()
@@ -191,14 +215,15 @@ class _SettingEditor(ttk.Frame):
         ttk.Separator(self).pack(side='bottom', fill='x')
 
     def reset(self):
+        window = utils.get_window(self)
         confirmed = messagebox.askyesno(
-            "Reset settings", "Do you want to reset all settings to defaults?",
-            parent=self)
+            window.title(), "Do you want to reset all settings to defaults?",
+            parent=window)
         if confirmed:
             config.reset()
             messagebox.showinfo(
-                "Reset settings", "All settings were reset to defaults.",
-                parent=self)
+                window.title(), "All settings were reset to defaults.",
+                parent=window)
 
 
 class __OldJunk:
