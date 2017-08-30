@@ -1,14 +1,10 @@
 """Syntax highlighting for Tkinter's text widget with Pygments."""
-# TODO: optimize by not always highlighting everything and may be get
-#       rid of the multiprocessing stuff? alternatively, at least don't
-#       make a separate process for each file!
-# TODO: if a tag goes all the way to end of line, extend it past it to
-#       hide the lagging at least a little bit (if we're not
-#       highlighting it line by line
+# FIXME: highlight the whole file when e.g. pasting
+# FIXME: multiline strings and comments break everything if you add a
+#        terminator character in the middle of the multi-line shit :/
 # TODO: better support for different languages in the rest of the editor
 
-import multiprocessing
-import queue
+import re
 import tkinter.font as tkfont
 
 import pygments.styles
@@ -16,7 +12,7 @@ import pygments.token
 import pygments.util   # only for ClassNotFound, the docs say that it's here
 
 import porcupine
-from porcupine import filetypes, settings, tabs
+from porcupine import settings, tabs
 
 config = settings.get_section('General')
 
@@ -29,61 +25,28 @@ def _list_all_token_types(tokentype):
 _ALL_TAGS = set(map(str, _list_all_token_types(pygments.token.Token)))  # noqa
 
 
-# tokenizing with pygments is the bottleneck of this thing (at least on
-# CPython) so it's done in another process
-class PygmentizerProcess:
+def tokenize(lexer, code, first_lineno):
+    lineno, column = first_lineno, 0
 
-    def __init__(self):
-        self.in_queue = multiprocessing.Queue()   # contains strings
-        self.out_queue = multiprocessing.Queue()  # dicts from _pygmentize()
-        self.process = multiprocessing.Process(target=self._run)
-        self.process.start()
+    # pygments skips empty lines in the beginning
+    lineno += len(re.search(r'^\n*', code).group(0))
 
-    # returns {str(tokentype): [start1, end1, start2, end2, ...]}
-    # TODO: send the actual FileType object instead of its name when
-    # FileTypes will support pickling
-    def _pygmentize(self, filetype_name, code):
-        # pygments doesn't include any info about where the tokens are
-        # so we need to do it manually :(
-        lineno = 1
-        column = 0
-        lexer = filetypes.filetypes[filetype_name].get_lexer()
-
-        result = {}
-        for tokentype, string in lexer.get_tokens(code):
-            start = '%d.%d' % (lineno, column)
-            if '\n' in string:
-                lineno += string.count('\n')
-                column = len(string.rsplit('\n', 1)[1])
-            else:
-                column += len(string)
-            end = '%d.%d' % (lineno, column)
-            result.setdefault(str(tokentype), []).extend([start, end])
-
-        return result
-
-    def _run(self):
-        while True:
-            # if multiple codes were queued while this thing was doing
-            # the previous code, just do the last one and ignore the rest
-            args = self.in_queue.get(block=True)
-            try:
-                while True:
-                    args = self.in_queue.get(block=False)
-                    # print("_run: ignoring a code")
-            except queue.Empty:
-                pass
-
-            result = self._pygmentize(*args)
-            self.out_queue.put(result)
+    for tokentype, text in lexer.get_tokens(code):
+        start = (lineno, column)
+        if '\n' in text:
+            lineno += text.count('\n')
+            column = len(text.split('\n')[-1])
+        else:
+            column += len(text)
+        end = (lineno, column)
+        yield tokentype, start, end
 
 
 class Highlighter:
 
-    def __init__(self, textwidget, filetype_name_getter):
+    def __init__(self, textwidget, lexer_getter):
         self.textwidget = textwidget
-        self._get_filetype_name = filetype_name_getter
-        self.pygmentizer = PygmentizerProcess()
+        self._get_lexer = lexer_getter
 
         # the tags use fonts from here
         self._fonts = {}
@@ -98,22 +61,16 @@ class Highlighter:
         config.connect('font_family', self._on_config_changed)
         config.connect('font_size', self._on_config_changed)
         self._on_config_changed()
-        self.textwidget.after(50, self._do_highlights)
+
+        textwidget.bind('<Destroy>', self.on_destroy, add=True)
 
     def on_destroy(self, junk=None):
         config.disconnect('pygments_style', self._on_config_changed)
         config.disconnect('font_family', self._on_config_changed)
         config.disconnect('font_size', self._on_config_changed)
 
-        #print("terminating", repr(self.pygmentizer.process))
-        self.pygmentizer.process.terminate()
-        #print("terminated", repr(self.pygmentizer.process))
-
     def _on_config_changed(self, junk=None):
-        # when the font family or size changes, self.textwidget['font']
-        # also changes because it's a porcupine.textwiddet.ThemedText widget
-        fontobject = tkfont.Font(name=self.textwidget['font'], exists=True)
-        font_updates = fontobject.actual()
+        font_updates = tkfont.Font(name='TkFixedFont', exists=True).actual()
         del font_updates['weight']     # ignore boldness
         del font_updates['slant']      # ignore italicness
 
@@ -123,8 +80,8 @@ class Highlighter:
                 font[key] = value
 
         # http://pygments.org/docs/formatterdevelopment/#styles
-        # all styles seem to yield all token types when iterated over,
-        # so we should always end up with the same tags configured
+        # all styles seem to yield all token types when iterated over, so
+        # we should always end up with the same tags configured
         style = pygments.styles.get_style_by_name(config['pygments_style'])
         for tokentype, infodict in style:
             # this doesn't use underline and border
@@ -132,52 +89,75 @@ class Highlighter:
             # how to implement the border with tkinter
             key = (infodict['bold'], infodict['italic'])   # pep8 line length
             kwargs = {'font': self._fonts[key]}
+
             if infodict['color'] is None:
                 kwargs['foreground'] = ''    # reset it
             else:
                 kwargs['foreground'] = '#' + infodict['color']
+
             if infodict['bgcolor'] is None:
                 kwargs['background'] = ''
             else:
                 kwargs['background'] = '#' + infodict['bgcolor']
 
+            # tag_lower makes sure that the selection tag shows above
+            # our token tag
             self.textwidget.tag_config(str(tokentype), **kwargs)
-
-            # make sure that the selection tag takes precedence over our
-            # token tag
             self.textwidget.tag_lower(str(tokentype), 'sel')
 
-    # handle things from the highlighting process
-    def _do_highlights(self):
-        # this check is actually unnecessary; turns out that destroying
-        # the text widget stops this timeout because the text widget's
-        # after method was used, but i don't feel like relying on it
-        if not self.pygmentizer.process.is_alive():
-            return
+    def _in_middle_of_tag(self, index):
+        for tag in self.textwidget.tag_names(index):
+            if (tag.startswith('Token.') and not
+                    tag.startswith(('Token.Text', 'Token.Text.'))):
+                # usually Token.Text means whitespace or something else
+                # that doesn't need to be highlighted
+                return True
+        return False
 
-        # if the pygmentizer process has put multiple result dicts to
-        # the queue, only use the last one
-        tags2add = None
-        try:
-            while True:
-                tags2add = self.pygmentizer.out_queue.get(block=False)
-        except queue.Empty:
-            pass
+    def _highlight_range(self, start_lineno, end_lineno):
+        print(start_lineno, end_lineno)
 
-        if tags2add is not None:
-            # print("_do_highlights: got something")
-            for tag in _ALL_TAGS:
-                self.textwidget.tag_remove(tag, '0.0', 'end')
-            for tag, places in tags2add.items():
-                self.textwidget.tag_add(tag, *places)
+        for tag in self.textwidget.tag_names():
+            if tag.startswith('Token.'):
+                self.textwidget.tag_remove(tag, '%d.0' % start_lineno,
+                                           '%d.0' % end_lineno)
 
-        # 50 milliseconds doesn't seem too bad, bigger timeouts tend to
-        # make things laggy
-        self.textwidget.after(50, self._do_highlights)
+        code = self.textwidget.get('%d.0' % start_lineno, '%d.0' % end_lineno)
+        tokens = tokenize(self._get_lexer(), code, start_lineno)
+        for tokentype, start, end in tokens:
+            self.textwidget.tag_add(str(tokentype), '%d.%d' % start,
+                                    '%d.%d' % end)
+
+    def highlight_around(self, lineno):
+        # find a 10 line chunk of code around the given lineno
+        start_lineno = max(lineno // 10 * 10, 1)
+        end_lineno = start_lineno + 10
+
+        # try to avoid bugs, with fingers crossed...
+        while (start_lineno > 1 and
+               self._in_middle_of_tag('%d.0 - 1 char' % start_lineno)):
+            start_lineno -= 10
+        if start_lineno < 1:
+            start_lineno = 1
+
+        # lineno_max goes *past* the last line, so '%d.0' % lineno_max is
+        # the end of the text widget
+        lineno_max = int(self.textwidget.index('end').split('.')[0])
+        while (lineno_max < lineno_max and
+               self._in_middle_of_tag('%d.0' % end_lineno)):
+            end_lineno += 10
+        if end_lineno > lineno_max:
+            end_lineno = lineno_max
+
+        self._highlight_range(start_lineno, end_lineno)
+
+    def highlight_around_cursor(self, junk=None):
+        cursor_lineno = int(self.textwidget.index('insert').split('.')[0])
+        self.highlight_around(cursor_lineno)
 
     def highlight_all(self, junk=None):
-        code = self.textwidget.get('1.0', 'end - 1 char')
-        self.pygmentizer.in_queue.put([self._get_filetype_name(), code])
+        lineno_max = int(self.textwidget.index('end').split('.')[0])
+        self._highlight_range(1, lineno_max)
 
 
 def on_new_tab(event):
@@ -185,11 +165,12 @@ def on_new_tab(event):
     if not isinstance(tab, tabs.FileTab):
         return
 
-    highlighter = Highlighter(tab.textwidget, (lambda: tab.filetype.name))
+    highlighter = Highlighter(
+        tab.textwidget, (lambda: tab.filetype.get_lexer()))
     tab.bind('<<FiletypeChanged>>', highlighter.highlight_all, add=True)
-    tab.textwidget.bind('<<ContentChanged>>', highlighter.highlight_all,
-                        add=True)
-    tab.bind('<Destroy>', highlighter.on_destroy, add=True)
+    tab.textwidget.bind(
+        '<<ContentChanged>>', highlighter.highlight_around_cursor,   # FIXME
+        add=True)
     highlighter.highlight_all()
 
 
@@ -200,16 +181,17 @@ def setup():
 if __name__ == '__main__':
     # simple test
     import tkinter
-    from porcupine.settings import load as load_settings
 
     def on_modified(event):
         text.unbind('<<Modified>>')
         text.edit_modified(False)
         text.bind('<<Modified>>', on_modified)
-        text.after_idle(highlighter.highlight_all)
+
+        cursor_lineno = int(event.widget.index('insert').split('.')[0])
+        highlighter.highlight_around(cursor_lineno)
 
     root = tkinter.Tk()
-    load_settings()     # must be after creating root window
+    config = settings.get_section('General')
     text = tkinter.Text(root, insertbackground='red')
     text.pack(fill='both', expand=True)
     text.bind('<<Modified>>', on_modified)
