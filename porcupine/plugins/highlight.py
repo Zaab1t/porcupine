@@ -2,8 +2,8 @@
 # FIXME: highlight the whole file when e.g. pasting
 # FIXME: multiline strings and comments break everything if you add a
 #        terminator character in the middle of the multi-line shit :/
-# TODO: better support for different languages in the rest of the editor
 
+import itertools
 import re
 import tkinter.font as tkfont
 
@@ -37,6 +37,7 @@ def tokenize(lexer, code, first_lineno):
             column = len(text.split('\n')[-1])
         else:
             column += len(text)
+
         end = (lineno, column)
         yield tokentype, start, end
 
@@ -46,6 +47,7 @@ class Highlighter:
     def __init__(self, textwidget, lexer_getter):
         self.textwidget = textwidget
         self._get_lexer = lexer_getter
+        self._highlight_all_id = None
 
         # the tags use fonts from here
         self._fonts = {}
@@ -114,8 +116,6 @@ class Highlighter:
         return False
 
     def _highlight_range(self, start_lineno, end_lineno):
-        print(start_lineno, end_lineno)
-
         for tag in self.textwidget.tag_names():
             if tag.startswith('Token.'):
                 self.textwidget.tag_remove(tag, '%d.0' % start_lineno,
@@ -155,8 +155,34 @@ class Highlighter:
         self.highlight_around(cursor_lineno)
 
     def highlight_all(self, junk=None):
-        lineno_max = int(self.textwidget.index('end').split('.')[0])
-        self._highlight_range(1, lineno_max)
+        def highlight_coro():
+            lineno_max = int(self.textwidget.index('end').split('.')[0])
+            for start in itertools.count(step=10):
+                if start == 0:
+                    start = 1
+                if start >= lineno_max:
+                    break
+                end = min(start + 10, lineno_max)
+
+                # don't recurse too crazily
+                self._highlight_range(start, end, may_highlight_all=False)
+
+                # it's important to yield here as opposed to somewhere
+                # else because here
+                yield
+
+        def one_step(coro):
+            try:
+                next(coro)
+            except StopIteration:
+                return
+            self._highlight_all_id = self.textwidget.after_idle(one_step, coro)
+
+        if self._highlight_all_id is not None:
+            # another highlight_all() is running, let's cancel that
+            self.textwidget.after_cancel(self._highlight_all_id)
+            self._highlight_all_id = None
+        one_step(highlight_coro())
 
 
 def on_new_tab(event):
