@@ -59,6 +59,7 @@ class _Pane(ttk.Notebook):
                 except IndexError:
                     another_pane = all_panes[all_panes.index(self) - 1]
                 another_pane.select().on_focus()
+                self.master._current_pane = another_pane   # just to be sure
             else:
                 # no, this is the last pane in the whole tab manager
                 self.master._current_pane = None
@@ -133,10 +134,9 @@ class TabManager(ttk.PanedWindow):
 
     .. virtualevent:: NewTab
 
-        This runs after a new tab has been added to this tab manager
-        with :meth:`~add_tab`. The tab is always added to the end of
-        :attr:`~tabs`, so you can access it with
-        ``event.widget.tabs[-1]``.
+        This runs when a new tab has been added to the tab manager with
+        :meth:`add_tab`. Use :func:`~porcupine.utils.bind_with_data` and
+        ``event.data_widget`` to access the tab that was added.
 
         Bind to the ``<Destroy>`` event of the tab if you want to clean
         up something when the tab is closed.
@@ -273,6 +273,9 @@ class TabManager(ttk.PanedWindow):
         pane.add_tab(initial_tab)
         self.insert(where, pane, weight=1)
 
+        if self._current_pane is None:
+            self._current_pane = pane
+
     def _on_maybe_pane_selected(self, event):
         for pane in self.panes():
             if str(event.widget).startswith(str(pane.select()) + '.'):
@@ -330,9 +333,7 @@ class TabManager(ttk.PanedWindow):
                 return existing_tab
 
         if self.panes():
-            # FIXME: the tab shouldn't be guaranteed to be the last tab
-            # in self.tabs -_-
-            self._current_pane = self.panes()[-1]
+            self._current_pane = self.panes()[0]
             self._current_pane.add_tab(tab)
         else:
             self._add_pane(tab)
@@ -343,7 +344,7 @@ class TabManager(ttk.PanedWindow):
         # the update() is needed in some cases because virtual events
         # don't run if the widget isn't visible yet
         self.update()
-        self.event_generate('<<NewTab>>')
+        self.event_generate('<<NewTab>>', data=tab)
         return tab
 
     def close_tab(self, tab):
@@ -559,17 +560,7 @@ class FileTab(Tab):
     *path* is given, the file will be saved there when Ctrl+S is
     pressed. Otherwise this becomes a "New File" tab.
 
-    For example, you can open a file from a path like this::
-
-        from porcupine import settings, tabs, utils
-
-        config = settings.get_section('General')
-        with open(your_path, 'r', encoding=config['encoding']) as file:
-            content = file.read()
-
-        tabmanager = utils.get_tab_manager()
-        tab = tabs.FileTab(tabmanager, content, path=your_path)
-        tabmanager.add_tab(tab)
+    If you want to read a file and open a new tab from 
 
     .. virtualevent:: PathChanged
 
@@ -616,7 +607,7 @@ bers.py>` use this attribute.
         .. seealso:: The :virtevt:`.FiletypeChanged` virtual event.
     """
 
-    def __init__(self, manager, content='', *, path=None):
+    def __init__(self, manager, content='', path=None):
         super().__init__(manager)
 
         self._save_hash = None
@@ -661,6 +652,21 @@ bers.py>` use this attribute.
         self.mark_saved()
         self._update_title()
         self._update_status()
+
+    @classmethod
+    def open_file(cls, manager, path):
+        """Read a file and return a new FileTab object.
+
+        Use this constructor if you want to open an existing file from a
+        path and let the user edit it.
+
+        :exc:`UnicodeError` or :exc:`OSError` is raised if reading the
+        file fails.
+        """
+        config = settings.get_section('General')
+        with open(path, 'r', encoding=config['encoding']) as file:
+            content = file.read()
+        return cls(manager, content, path)
 
     def equivalent(self, other):
         """Return True if *self* and *other* are saved to the same place.
@@ -848,7 +854,7 @@ if __name__ == '__main__':
     tabmgr = TabManager(root)
     tabmgr.pack(fill='both', expand=True)
     tabmgr.bind('<<NewTab>>',
-                lambda event: print("added tab", tabmgr.tabs[-1].i),
+                lambda event: print("added tab", event.data_widget.i),
                 add=True)
     tabmgr.bind('<<CurrentTabChanged>>',
                 lambda event: print("selected", event.widget.current_tab.i),

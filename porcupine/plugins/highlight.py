@@ -11,8 +11,7 @@ import pygments.styles
 import pygments.token
 import pygments.util   # only for ClassNotFound, the docs say that it's here
 
-import porcupine
-from porcupine import settings, tabs
+from porcupine import filetypes, get_tab_manager, settings, tabs, utils
 
 config = settings.get_section('General')
 
@@ -161,7 +160,7 @@ class Highlighter:
 
 
 def on_new_tab(event):
-    tab = event.widget.tabs[-1]
+    tab = event.data_widget
     if not isinstance(tab, tabs.FileTab):
         return
 
@@ -174,8 +173,9 @@ def on_new_tab(event):
     highlighter.highlight_all()
 
 
+
 def setup():
-    porcupine.get_tab_manager().bind('<<NewTab>>', on_new_tab, add=True)
+    utils.bind_with_data(get_tab_manager(), '<<NewTab>>', on_new_tab, add=True)
 
 
 if __name__ == '__main__':
